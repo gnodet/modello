@@ -210,7 +210,7 @@ public class Xpp3ReaderGenerator
         sc.addIndented( "throw new XmlPullParserException( \"Duplicated tag: '" + tagName + "'\", parser, null );" );
         sc.add( "}" );
 
-        sc.add( variableName + " = parse" + capClassName + "( parser, strict" + trackingArgs + " );" );
+        sc.add( variableName + " = parse" + capClassName + "( parser, strict" + ", \"" + tagName + "\"" + trackingArgs + " );" );
 
         if ( rootElement )
         {
@@ -332,8 +332,6 @@ public class Xpp3ReaderGenerator
 
         String unmarshallerName = getFileName( "Xpp3Reader" + ( isLocationTracking() ? "Ex" : "" ) );
 
-        JSourceWriter sourceWriter = newJSourceWriter( packageName, unmarshallerName );
-
         JClass jClass = new JClass( packageName + '.' + unmarshallerName );
         initHeader( jClass );
         suppressAllWarnings( objectModel, jClass );
@@ -353,27 +351,6 @@ public class Xpp3ReaderGenerator
         // ----------------------------------------------------------------------
         // Write option setters
         // ----------------------------------------------------------------------
-
-        JConstructor constructor2 = new JConstructor(jClass);
-        constructor2.getSourceCode().add( "this( new ContentTransformer()\n" + "        {\n"
-                                              + "            public String transform( String source, String fieldName )\n"
-                                              + "            {\n" + "                return source;\n"
-                                              + "            }\n" + "        } );" );
-        jClass.addConstructor( constructor2 );
-
-
-        JConstructor constructor = new JConstructor(jClass);
-        constructor.addParameter( new JParameter( new JType("ContentTransformer"), "contentTransformer"  ) );
-        constructor.getSourceCode().add( "this.contentTransformer = contentTransformer;" );
-        jClass.addConstructor( constructor );
-
-        jClass.addSourceCode(  "public static interface ContentTransformer\n" + "{\n" + "    /**\n"
-                                   + "     * Interpolate the value read from the xpp3 document\n"
-                                   + "     * @param source The source value\n"
-                                   + "     * @param fieldName A description of the field being interpolated. The implementation may use this to\n"
-                                   + "     *                           log stuff.\n"
-                                   + "     * @return The interpolated value.\n" + "     */\n"
-                                   + "    String transform( String source, String fieldName );\n" + "}\n");
 
         // The Field
         JField addDefaultEntities = new JField( JType.BOOLEAN, "addDefaultEntities" );
@@ -437,17 +414,77 @@ public class Xpp3ReaderGenerator
 
         if ( requiresDomSupport )
         {
-            writeBuildDomMethod( jClass );
-
-            if ( isLocationTracking() )
+            if ( domAsXpp3 )
             {
-                writeBuildDomLocationTrackingMethod( jClass );
+                jClass.addImport("org.codehaus.plexus.util.xml.Xpp3Dom" );
+                jClass.addImport("org.codehaus.plexus.util.xml.Xpp3DomBuilder" );
+
+                if ( isLocationTracking() )
+                {
+                    writeBuildDomLocationTrackingMethod( jClass );
+                }
+            }
+            else
+            {
+                jClass.addImport( "org.w3c.dom.Document" );
+                jClass.addImport( "org.w3c.dom.Element" );
+                jClass.addImport( "javax.xml.parsers.DocumentBuilderFactory" );
+                jClass.addImport( "javax.xml.parsers.DocumentBuilder" );
+
+                writeBuildDomMethod( jClass );
             }
         }
+
+        jClass.addSourceCode(  "public static interface ContentTransformer\n"
+                + "    {\n"
+                + "        /**\n"
+                + "         * Interpolate the value read from the xpp3 document\n"
+                + "         * @param source The source value\n"
+                + "         * @param fieldName A description of the field being interpolated. The implementation may use this to\n"
+                + "         *                           log stuff.\n"
+                + "         * @return The interpolated value.\n"
+                + "         */\n"
+                + "        String transform( String source, String fieldName );\n"
+                + ( requiresDomSupport
+                ? "        /**\n"
+                + "         * Interpolate the value read from the xml document\n"
+                + "         */\n"
+                + ( domAsXpp3
+                ? "        Xpp3Dom transform( Xpp3Dom source, String fieldName );\n"
+                : "        Document transform( Document source, String fieldName );\n" )
+                : "" )
+                + "    }\n");
+
+        JConstructor constructor2 = new JConstructor(jClass);
+        constructor2.getSourceCode().add( "this( new ContentTransformer()\n"
+                + "        {\n"
+                + "            public String transform( String source, String fieldName )\n"
+                + "            {\n"
+                + "                return source;\n"
+                + "            }\n"
+                + ( requiresDomSupport ? domAsXpp3
+                ? "            public Xpp3Dom transform( Xpp3Dom source, String fieldName )\n"
+                + "            {\n"
+                + "                return source;\n"
+                + "            }\n"
+                : "            public Document transform( Document source, String fieldName )\n"
+                + "            {\n"
+                + "                return source;\n"
+                + "            }\n"
+                : "" )
+                + "        } );" );
+        jClass.addConstructor( constructor2 );
+
+        JConstructor constructor = new JConstructor(jClass);
+        constructor.addParameter( new JParameter( new JType("ContentTransformer"), "contentTransformer"  ) );
+        constructor.getSourceCode().add( "this.contentTransformer = contentTransformer;" );
+        jClass.addConstructor( constructor );
 
         // ----------------------------------------------------------------------
         //
         // ----------------------------------------------------------------------
+
+        JSourceWriter sourceWriter = newJSourceWriter( packageName, unmarshallerName );
 
         jClass.print( sourceWriter );
 
@@ -491,6 +528,7 @@ public class Xpp3ReaderGenerator
 
         unmarshall.addParameter( new JParameter( new JClass( "XmlPullParser" ), "parser" ) );
         unmarshall.addParameter( new JParameter( JClass.BOOLEAN, "strict" ) );
+        unmarshall.addParameter( new JParameter( new JClass( "String" ), "path" ) );
         addTrackingParameters( unmarshall );
 
         unmarshall.addException( new JClass( "IOException" ) );
@@ -690,7 +728,7 @@ public class Xpp3ReaderGenerator
                 sc.add( "{" );
                 sc.addIndented(
                     objectName + ".set" + capFieldName + "( parse" + association.getTo() + "( parser, strict"
-                        + trackingArgs + " ) );" );
+                        + ", path + \"/" + field.getName() + "\"" + trackingArgs + " ) );" );
                 sc.add( "}" );
             }
             else
@@ -816,7 +854,9 @@ public class Xpp3ReaderGenerator
 
                     if ( inModel )
                     {
-                        sc.add( adder + "( parse" + association.getTo() + "( parser, strict" + trackingArgs + " ) );" );
+                        sc.add( adder + "( parse" + association.getTo() + "( parser, strict"
+                                + ", path + \"/" + field.getName() + "[\" + " + associationName + ".size() + \"]\""
+                                + trackingArgs + " ) );" );
                     }
                     else
                     {
@@ -948,7 +988,7 @@ public class Xpp3ReaderGenerator
                         sc.add(
                             "String value = parser.nextText()" + ( xmlFieldMetadata.isTrim() ? ".trim()" : "" ) + ";" );
 
-                        sc.add( objectName + ".add" + capitalise( singularName ) + "( key, value );" );
+                        sc.add( objectName + ".add" + capitalise( singularName ) + "( key, interpolated( value, path + \"/" + field.getName() + "[\" + key + \"]\" ) );" );
 
                         sc.unindent();
                         sc.add( "}" );
@@ -987,7 +1027,7 @@ public class Xpp3ReaderGenerator
 
         if ( xmlFieldMetadata.isTrim() )
         {
-            parserGetter = "interpolatedTrimmed( " + parserGetter + ", \"" + tagName + "\" )";
+            parserGetter = "interpolatedTrimmed( " + parserGetter + ", path + \"/" + tagName + "\" )";
         }
 
         String keyCapture = "";
@@ -1075,9 +1115,13 @@ public class Xpp3ReaderGenerator
             {
                 locationBuilderParam = ", new Xpp3DomBuilderInputLocationBuilder( " + LOCATION_VAR + " )";
             }
+            else if ( domAsXpp3 )
+            {
+                locationBuilderParam = ", null";
+            }
             sc.add( objectName + "." + setterName + "( " + keyCapture
-                + ( domAsXpp3 ? "org.codehaus.plexus.util.xml.Xpp3DomBuilder.build" : "buildDom" )
-                + "( parser, " + xmlFieldMetadata.isTrim() + locationBuilderParam + " ) );" );
+                + ( domAsXpp3 ? "interpolatedTrimmedDom" : "buildDom" )
+                + "( parser, " + xmlFieldMetadata.isTrim() + ", path + \"/" + tagName + "\"" + locationBuilderParam + " ) );" );
 
             requiresDomSupport = true;
         }
@@ -1094,29 +1138,24 @@ public class Xpp3ReaderGenerator
 
     private void writeBuildDomMethod( JClass jClass )
     {
-        if ( domAsXpp3 )
-        {
-            // no need, Xpp3DomBuilder provided by plexus-utils
-            return;
-        }
-
-        jClass.addField( new JField( new JClass( "org.w3c.dom.Document" ), "_doc_" ) );
+        jClass.addField( new JField( new JClass( "Document" ), "_doc_" ) );
         JMethod method = new JMethod( "initDoc", null, null );
         method.getModifiers().makePrivate();
         method.addException( new JClass( "javax.xml.parsers.ParserConfigurationException" ) );
 
         JSourceCode sc = method.getSourceCode();
         sc.add(
-            "javax.xml.parsers.DocumentBuilderFactory dbfac = javax.xml.parsers.DocumentBuilderFactory.newInstance();" );
-        sc.add( "javax.xml.parsers.DocumentBuilder docBuilder = dbfac.newDocumentBuilder();" );
+            "DocumentBuilderFactory dbfac = DocumentBuilderFactory.newInstance();" );
+        sc.add( "DocumentBuilder docBuilder = dbfac.newDocumentBuilder();" );
         sc.add( "_doc_ = docBuilder.newDocument();" );
         jClass.addMethod( method );
 
-        String type = "org.w3c.dom.Element";
+        String type = "Element";
         method = new JMethod( "buildDom", new JType( type ), null );
         method.getModifiers().makePrivate();
         method.addParameter( new JParameter( new JType( "XmlPullParser" ), "parser" ) );
         method.addParameter( new JParameter( JType.BOOLEAN, "trim" ) );
+        method.addParameter( new JParameter( new JType( "String" ), "path" ) );
         method.addException( new JClass( "XmlPullParserException" ) );
         method.addException( new JClass( "IOException" ) );
 
@@ -1140,7 +1179,7 @@ public class Xpp3ReaderGenerator
         sc.add( "spacePreserve = false;" );
         sc.add( "String rawName = parser.getName();" );
 
-        sc.add( "org.w3c.dom.Element element = _doc_.createElement( rawName );" );
+        sc.add( "Element element = _doc_.createElement( rawName );" );
 
         sc.add( "if ( !elements.empty() )" );
         sc.add( "{" );
@@ -1226,16 +1265,10 @@ public class Xpp3ReaderGenerator
 
     private void writeBuildDomLocationTrackingMethod( JClass jClass )
     {
-        if ( !domAsXpp3 )
-        {
-            // no need, input location tracking available only for Xpp3
-            return;
-        }
-
         JClass builderClass = jClass.createInnerClass( "Xpp3DomBuilderInputLocationBuilder" );
         builderClass.getModifiers().makePrivate();
         builderClass.getModifiers().setStatic( true );
-        builderClass.addInterface( "org.codehaus.plexus.util.xml.Xpp3DomBuilder.InputLocationBuilder" );
+        builderClass.addInterface( "Xpp3DomBuilder.InputLocationBuilder" );
 
         JField field = new JField( new JType( locationTracker.getName() ), "rootLocation" );
         field.getModifiers().setFinal( true );
@@ -1256,6 +1289,11 @@ public class Xpp3ReaderGenerator
     {
         jClass.addMethod(getTrimmedValueMethod());
         jClass.addMethod(getInterpolatedTrimmed());
+        jClass.addMethod(getInterpolated());
+        if( requiresDomSupport && domAsXpp3 )
+        {
+            jClass.addMethod(getInterpolatedTrimmedDom());
+        }
         jClass.addMethod(getRequiredAttributeValueMethod());
         jClass.addMethod(getBooleanValueMethod());
         jClass.addMethod(getBooleanValue2Method());
@@ -1560,6 +1598,19 @@ public class Xpp3ReaderGenerator
         return method;
     }
 
+    private JMethod getInterpolated() {
+        JMethod method = new JMethod( "interpolated", new JClass( "String" ), null );
+        method.getModifiers().makePrivate();
+
+        method.addParameter( new JParameter( new JClass( "String" ), "value" ) );
+        method.addParameter( new JParameter( new JClass( "String" ), "context" ) );
+
+        JSourceCode sc = method.getSourceCode();
+
+        sc.add( "return contentTransformer.transform( value, context );" );
+        return method;
+    }
+
     private JMethod getInterpolatedTrimmed() {
         JMethod method = new JMethod( "interpolatedTrimmed", new JClass( "String" ), null );
         method.getModifiers().makePrivate();
@@ -1569,10 +1620,25 @@ public class Xpp3ReaderGenerator
 
         JSourceCode sc = method.getSourceCode();
 
-        sc.add( "return getTrimmedValue( contentTransformer.transform( value, context ) );" );
+        sc.add( "return getTrimmedValue( interpolated( value, context ) );" );
         return method;
     }
 
+    private JMethod getInterpolatedTrimmedDom() {
+        JMethod method = new JMethod( "interpolatedTrimmedDom", new JClass( "Xpp3Dom" ), null );
+        method.getModifiers().makePrivate();
+        method.addParameter( new JParameter( new JClass( "XmlPullParser" ), "parser" ) );
+        method.addParameter( new JParameter( new JType( "boolean" ), "trim" ) );
+        method.addParameter( new JParameter( new JClass( "String" ), "context" ) );
+        method.addParameter( new JParameter( new JClass( "Xpp3DomBuilder.InputLocationBuilder" ), "locationBuilder" ) );
+        method.addException( new JClass("IOException" ) );
+        method.addException( new JClass("XmlPullParserException" ) );
+
+        JSourceCode sc = method.getSourceCode();
+
+        sc.add( "return contentTransformer.transform( Xpp3DomBuilder.build( parser, trim, locationBuilder ), context );" );
+        return method;
+    }
 
     private JMethod convertNumericalType( String methodName, JType returnType, String expression, String typeDesc )
     {
